@@ -137,6 +137,15 @@ class TestSecureDropAdmin(object):
             for patcher in patchers:
                 patcher.stop()
 
+    def test_get_release_key_from_valid_keyserver(self, tmpdir, caplog):
+        git_repo_path = str(tmpdir)
+        args = argparse.Namespace(root=git_repo_path)
+        with mock.patch.object(subprocess, 'Popen') as mocked_popen:
+            mocked_popen.return_value.communicate.return_value = ('no',
+                                                                  'problems')
+            # Check that no exception is raised when the process is fast
+            securedrop_admin.get_release_key_from_keyserver(args)
+
     def test_update_signature_verifies(self, tmpdir, caplog):
         git_repo_path = str(tmpdir)
         args = argparse.Namespace(root=git_repo_path)
