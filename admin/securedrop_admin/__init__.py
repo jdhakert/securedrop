@@ -30,6 +30,7 @@ import re
 import string
 import subprocess
 import sys
+import threading
 import types
 import prompt_toolkit
 from prompt_toolkit.validation import Validator, ValidationError
@@ -39,6 +40,10 @@ sdlog = logging.getLogger(__name__)
 
 
 class FingerprintException(Exception):
+    pass
+
+
+class KeyserverTimeoutException(Exception):
     pass
 
 
@@ -488,6 +493,32 @@ def check_for_updates(args):
     return False, latest_tag
 
 
+def get_release_key_from_keyserver(args, keyserver=None, timeout=45):
+    gpg_recv = ['gpg', '--recv-key']
+    release_key = ['22245C81E3BAEB4138B36061310F561200F4AD77']
+
+    # We construct the gpg --recv-key command based on optional keyserver arg.
+    if keyserver:
+        get_key_cmd = gpg_recv + ['--keyserver', keyserver] + release_key
+    else:
+        get_key_cmd = gpg_recv + release_key
+
+    gpg_recv_key = subprocess.Popen(
+       get_key_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+       cwd=args.root)
+
+    timer = threading.Timer(timeout, gpg_recv_key.kill)
+
+    try:
+        timer.start()
+        stdout, stderr = gpg_recv_key.communicate()
+    finally:
+        timer.cancel()
+
+    if gpg_recv_key.returncode < 0:
+        raise KeyserverTimeoutException
+
+
 def update(args):
     """Verify, and apply latest SecureDrop workstation update"""
     sdlog.info("Applying SecureDrop updates...")
@@ -502,9 +533,15 @@ def update(args):
     subprocess.check_call(git_checkout_cmd, cwd=args.root)
 
     sdlog.info("Verifying signature on latest update...")
-    get_release_key = ['gpg', '--recv-key',
-                       '22245C81E3BAEB4138B36061310F561200F4AD77']
-    subprocess.check_call(get_release_key, cwd=args.root)
+
+    try:
+        # First try to get the release key using Tails default keyserver
+        get_release_key_from_keyserver(args)
+    except KeyserverTimeoutException:
+        # Now try to get the key from a secondary keyserver.
+        secondary_keyserver = 'hkps://hkps.pool.sks-keyservers.net'
+        get_release_key_from_keyserver(args,
+                                       keyserver=secondary_keyserver)
 
     git_verify_tag_cmd = ['git', 'tag', '-v', latest_tag]
     sig_result = subprocess.check_output(git_verify_tag_cmd,
